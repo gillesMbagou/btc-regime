@@ -1,18 +1,21 @@
 mod correlation;
 mod data;
+mod onchain;
 mod pulse;
 mod report;
 mod series;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
+use onchain::{OnchainReport, PoolQuery, StablecoinLine};
 use pulse::{AssetPulse, PulseReport};
 use report::RegimeReport;
 use series::{align, log_returns};
 
 /// Outils de lecture de marché BTC inspirés d'une newsletter macro crypto :
-/// régime de corrélation (tech vs valeur refuge) et pouls du marché des futures.
+/// régime de corrélation (tech vs valeur refuge), pouls du marché des futures,
+/// et rendement stablecoin on-chain vs taux sans risque.
 #[derive(Parser)]
 #[command(name = "btc-regime", version, about)]
 struct Cli {
@@ -38,12 +41,15 @@ enum Command {
         #[arg(long, default_value_t = 7)]
         days: u32,
     },
+    /// Rendement stablecoin (Aave v3) vs taux sans risque (recrée la section "Onchain")
+    Onchain,
 }
 
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Regime { days, window } => run_regime(days, window),
         Command::Pulse { days } => run_pulse(days),
+        Command::Onchain => run_onchain(),
     }
 }
 
@@ -112,6 +118,51 @@ fn run_pulse(days: u32) -> Result<()> {
     }
 
     PulseReport { assets }.print();
+    Ok(())
+}
+
+fn run_onchain() -> Result<()> {
+    eprintln!("Récupération du taux sans risque (T-bill 13 semaines, Yahoo Finance)...");
+    let irx = data::fetch_yahoo("%5EIRX", "5d")?;
+    let risk_free_pct = irx
+        .last()
+        .map(|(_, v)| *v)
+        .context("aucune donnée T-bill récente")?;
+
+    eprintln!("Récupération des APY stablecoins (Aave v3, via DeFiLlama)...");
+    let queries = [
+        PoolQuery {
+            project: "aave-v3",
+            chain: "Ethereum",
+            symbol: "USDC",
+        },
+        PoolQuery {
+            project: "aave-v3",
+            chain: "Ethereum",
+            symbol: "USDT",
+        },
+    ];
+    let rates = onchain::fetch_stablecoin_apys(&queries)?;
+
+    let labels = ["USDC (Aave v3, Ethereum)", "USDT (Aave v3, Ethereum)"];
+    let lines = labels
+        .into_iter()
+        .zip(rates)
+        .map(|(label, rate)| StablecoinLine {
+            label,
+            apy_pct: rate.apy_pct,
+            tvl_usd: rate.tvl_usd,
+            spread_pct: rate.apy_pct - risk_free_pct,
+            read: onchain::classify_spread(rate.apy_pct, risk_free_pct),
+        })
+        .collect();
+
+    OnchainReport {
+        risk_free_pct,
+        risk_free_label: "T-bill 13 semaines, ^IRX",
+        lines,
+    }
+    .print();
     Ok(())
 }
 
