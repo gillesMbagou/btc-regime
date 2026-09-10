@@ -1,5 +1,7 @@
 # btc-regime
 
+[![CI](https://github.com/gillesMbagou/btc-regime/actions/workflows/ci.yml/badge.svg)](https://github.com/gillesMbagou/btc-regime/actions/workflows/ci.yml)
+
 CLI Rust qui mesure si Bitcoin se comporte plutôt comme un actif tech (corrélé
 au Nasdaq) ou comme une valeur refuge (corrélé à l'or), et suit l'évolution de
 cette corrélation dans le temps.
